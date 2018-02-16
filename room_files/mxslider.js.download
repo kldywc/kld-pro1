@@ -1,0 +1,966 @@
+/**
+ * MX-Slider
+ *
+ * @author: René Haake
+ *
+ * required: jQuery 1.11.x or heigher
+ */
+
+var mxS             = new Object(); //pseudo-Namespace
+mxS.timerIntervals  = new Object(); //window-set/clearInterval
+mxS.url             = "https://widgets.xara-online.com/slider/";
+mxS.requestURL      = "https://api.xara-online.com/v1/slideshow/";
+mxS.jqueryLoadCounter = 0;
+
+var checkJquery,
+    checkIE,
+    mxsInitSliders,
+    fnlogFunc       = function(f){
+//                            console.log(f);
+                        };
+
+
+//window.onload       = function(){
+window.addEventListener ('load', function(){
+        if (typeof jQuery === 'undefined') {
+            var e = document.createElement('script');
+            e.src = mxS.url+'js/jquery.js';
+            e.type='text/javascript';
+            document.getElementsByTagName("head")[0].appendChild(e);
+            this.checkJquery();
+        }else
+            mxsInitSliders();
+    }, false
+);
+
+checkJquery         = function(){
+    if (typeof jQuery === 'undefined'){
+        mxS.jqueryLoadCounter++;
+        window.setTimeout(checkJquery,300);
+    }else
+        mxsInitSliders();
+};
+
+checkIE             = function(){ //Featuredetection
+    //var ua = window.navigator.userAgent;
+    //return !!(ua.indexOf("MSIE ")>0 && ua.indexOf("MSIE 10")==-1); //ie<10
+    var b = document.body || document.documentElement,
+        s = b.style,
+        p = 'transition';
+
+    if (typeof s[p] == 'string') { return false; }
+
+    // Tests for vendor specific prop
+    var v = ['Moz', 'webkit', 'Webkit', 'Khtml', 'O', 'ms'];
+    p = p.charAt(0).toUpperCase() + p.substr(1);
+
+    for (var i=0; i<v.length; i++) {
+        if (typeof s[v[i] + p] == 'string') { return false; }
+    }
+
+    return true;
+};
+
+
+
+mxsInitSliders      = function(){
+    fnlogFunc("mxsInitSliders");
+    mxS.arSlider = new Array();
+    var arSlider = $(".mxSlider");
+    if(arSlider.length>0){
+        var strFonts = "<link href='https://fonts.googleapis.com/css?family=", arFonts = [
+            "Open+Sans","Source+Sans+Pro","Roboto+Condensed","Oswald","Source+Serif+Pro","Roboto+Slab","Merriweather","Playfair+Display","Cherry+Swash","Lobster","Dancing+Script","Amatic+SC"
+        ];
+        for(var f=0 in arFonts){
+            strFonts += arFonts[f]+":300,400,600,900|";
+        }
+        strFonts += "' rel='stylesheet' type='text/css'>";
+        $("head")
+            .append(strFonts)
+            .append('<link rel="stylesheet" href="'+mxS.url+'css/mxslider.css?t='+new Date().getTime()+'" type="text/css">')
+            .append('<link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">');
+
+        for(var i=0;i<arSlider.length;i++){
+            var tmp = new mxS.Slider();
+            tmp.init(arSlider[i],i);
+            mxS.arSlider.push(tmp);
+        }
+    }
+    if(mxS.fnSliderCallback!==undefined && typeof(mxS.fnSliderCallback) == "function"){
+        mxS.fnSliderCallback();
+    }
+};
+
+
+
+/***************************************************************************************************************
+ * CLASS SLIDER
+ * @constructor
+ */
+mxS.Slider = function(){};
+mxS.Slider.prototype.init           = function(parent,cnt){
+    fnlogFunc("Slider:init");
+    this.divParent      = $(parent);
+    this.albumID        = this.divParent.data("slideshowid");
+    this.sliderID       = "mxs-slider-"+cnt;
+    this.slideShow      = null;
+    mxS.timerIntervals[this.sliderID] = null;
+    this.curIndex       = 0;
+    this.isSliding      = false; //gibt an ob der Slider aktiv ist
+    this.isInTransition = false; //gibt an ob der Slider sich gerade zwischen zwei Bilder befindet
+
+    this.build();
+    this.setEvents();
+    this.load(this.albumID);
+};
+mxS.Slider.prototype.build          = function(){
+    fnlogFunc("Slider:build");
+    this.divSlider          = $("<div></div>").addClass("mxs-slider").attr({"id":this.sliderID});
+    this.divImages          = $("<div></div>").addClass("mxs-images");
+    this.divNext            = $("<div></div>").addClass("mxs-next mxs-arrow").hover(function(){$(this).addClass("hover-animation")},function(){$(this).removeClass("hover-animation")});
+    this.divPrev            = $("<div></div>").addClass("mxs-prev mxs-arrow").hover(function(){$(this).addClass("hover-animation")},function(){$(this).removeClass("hover-animation")});
+    this.divPlay            = $("<div></div>").addClass("mxs-play fa fa-lg fa-play").hover(function(){$(this).addClass("hover-animation")},function(){$(this).removeClass("hover-animation")});
+    this.divTexts           = $("<div></div>").addClass("mxs-texts");
+    this.divTitleWrapper    = $("<div></div>").addClass("mxs-titleWrapper mxs-textItem");
+    this.divTitle           = $("<div></div>").addClass("mxs-title mxs-textItem");
+    this.divCaptionWrapper  = $("<div></div>").addClass("mxs-captionWrapper mxs-textItem");
+    this.divCaption         = $("<div></div>").addClass("mxs-caption mxs-textItem");
+    this.divNavigation      = $("<div></div>").addClass("mxs-navigation");
+    this.divGradientTop     = $("<div></div>").addClass("mxs-gradientTop");
+    this.divGradientBottom  = $("<div></div>").addClass("mxs-gradientBottom");
+    this.tagStyles          = $("<style></style>");
+    this.divParent
+        .append(this.divSlider
+            .append(this.tagStyles)
+            .append(
+                this.divImages,
+                this.divGradientTop
+                    .append(
+                        this.divGradientBottom
+                            .append(
+                                this.divTexts
+                                    .append(
+                                        this.divTitleWrapper.append(this.divTitle),
+                                        this.divCaptionWrapper.append(this.divCaption)
+                                    ),
+                                this.divPrev,
+                                this.divNext,
+                                this.divPlay,
+                                this.divNavigation
+                            )
+                    )
+            )
+        );
+};
+mxS.Slider.prototype.load           = function(slideshowID){ //laden via Ajax (life-betrieb)
+    fnlogFunc("Slider:load");
+    if(slideshowID!==undefined){
+        //params via Ajax mittels this.slideshowID holen und dann fnCallback ausführen
+        var $this = this;
+        $.ajax({
+            method:         "POST",
+            dataType:       "json",
+            contentType:    "application/json",
+            url:            mxS.requestURL+"get_slideshow",
+            data:           JSON.stringify({ slideshow_id: slideshowID })
+        }).done(function( res ) {
+            $this.loadSlideShow(res.settings,res.images);
+        });
+    }
+};
+mxS.Slider.prototype.loadSlideShow   = function(params,images){
+    var $this;
+    if(checkIE()){
+        var url = (images.length>0) ? images[0].download_url : "";
+        this.divImages
+            .addClass("mxs-oldBrowser")
+            .css({
+                "background-image":"url('"+url+"')",
+                "background-size":(params.bgSize!==undefined) ? params.bgSize : "contain"
+            })
+            .append(
+                $("<div></div>").addClass("mxs-ob-bg")
+            )
+            .append(
+                $("<div></div>").addClass("mxs-ob-txt")
+                    .html("A too old Version of Internet Explorer is detected. This widget requires Internet Explorer 10 or newer to be installed on your device.")
+            );
+
+    }else{
+        fnlogFunc("Slider:loadSlideShow");
+        this.slideShow = new mxS.SlideShow();
+        this.slideShow.setParams(params,true);
+        this.divTitle.html("");
+        this.divCaption.html("");
+        this.setStyles();
+        this.setTextpositions();
+        this.loadNavigation();
+        this.setArrowType();
+        $this = this;
+        this.reloadImages(images,function(){
+            if($this.slideShow.get("autoPlay")) {
+                $this.slide();
+            }
+        });
+    }
+};
+mxS.Slider.prototype.setEvents      = function(){
+    fnlogFunc("Slider:setEvents");
+    var $this = this;
+    this.divSlider.unbind("click").bind("click",function(e){$this.clickListener(e)});
+
+    $(window).resize(function(){
+        $this.recalcSlideshow("NO-ANIMATION");
+    });
+};
+mxS.Slider.prototype.recalcSlideshow      = function(transitionType){
+    fnlogFunc("Slider:recalcSlideshow");
+    this.stop();
+    this.calcSliderDimensions();
+    this.slideShow.resetImagesDimensions();
+    this.preloadImages();
+    this.animate(-1,this.curIndex,transitionType);
+    if(this.slideShow.get("autoPlay"))
+        this.slide();
+};
+mxS.Slider.prototype.clickListener   = function(e){
+    fnlogFunc("Slider:clickListener");
+    var target = $(e.target);
+    if(target.hasClass("mxs-prev")){
+        if(!this.getInTransition()){
+            this.stop();
+            this.prev();
+        }
+    }else if(target.hasClass("mxs-next")){
+        if(!this.getInTransition()){
+            this.stop();
+            this.next();
+        }
+    }else if(target.hasClass("mxs-play")){
+        this.slide();
+    }else if(target.hasClass("mxs-navigation-bullet")){
+        this.stop();
+        this.animate(this.curIndex,target.data("nav"),null);
+    }else if(target.hasClass("mxs-gradientBottom")){
+        this.stop();
+    }
+};
+mxS.Slider.prototype.calcSliderDimensions   = function(){
+    this.sliderH = this.divParent.height();
+    this.sliderW = this.divParent.width();
+};
+mxS.Slider.prototype.changeSingleParameter   = function(k,v){ //for editor only
+    fnlogFunc("Slider:changeSingleParameter");
+    if(k.indexOf("color")>=0)
+        v = this.slideShow.fnHexToRgb(v);
+    this.slideShow.set(k,v);
+    if(k=="imagesRandom"){
+        $(".mxs-image").addClass("mxs-hidden");
+        this.slideShow.setParam("imagesRandom",v,false,[true,false],null);
+        this.slideShow.randomizeImages();
+        this.animate(this.curIndex,0,null);
+        return;
+        //return this.loadSlideShow(this.slideShow.params);
+    }
+    if(k.indexOf("letteringAlign")>=0 || k.indexOf("letteringPosition")>=0){
+        this.setTextpositions();
+        return;
+    }
+    if(k.indexOf("colorNavigation")>=0)
+        this.setNavigationColors(this.curIndex);
+    else if(k.toLowerCase().indexOf("navigation")>=0)
+        this.setNavigationPosition();
+    else if(k.indexOf("bgSize")>=0){
+        this.setStyles();
+        this.animate(this.curIndex,0,null);
+        return;
+    }
+    else if(k.indexOf("transition")>=0){
+        this.slideShow.setParams(this.slideShow.params,false);
+        if(this.divSlider.hasClass("mxs-isSliding"))
+            this.slide();
+    }else if(k.indexOf("arrowType")>=0){
+        this.setArrowType();
+    }
+    this.setStyles();
+};
+mxS.Slider.prototype.setStyles      = function(){
+    fnlogFunc("Slider:setStyles");
+    var arSliderClasses, cssSlider = {},cssArrows,
+        fnGradients = function(rgbVal,fromOpacity,fromVal,toOpacity,toVal){
+            if(fromVal != toVal)
+                return {
+                    "background":"-moz-linear-gradient(top, rgba("+rgbVal+","+fromOpacity+") "+fromVal+"%, rgba("+rgbVal+","+toOpacity+") "+toVal+"%)", /* FF3.6+ */
+                    "background":"-webkit-gradient(linear, left top, left bottom, color-stop("+fromVal+"%,rgba("+rgbVal+","+fromOpacity+")), color-stop("+toVal+"%,rgba("+rgbVal+","+toOpacity+")))", /* Chrome,Safari4+ */
+                    "background":"-webkit-linear-gradient(top, rgba("+rgbVal+","+fromOpacity+") "+fromVal+"%,rgba("+rgbVal+","+toOpacity+") "+toVal+"%)", /* Chrome10+,Safari5.1+ */
+                    "background":"-o-linear-gradient(top, rgba("+rgbVal+","+fromOpacity+") "+fromVal+"%,rgba("+rgbVal+","+toOpacity+") "+toVal+"%)", /* Opera 11.10+ */
+                    "background":"-ms-linear-gradient(top, rgba("+rgbVal+","+fromOpacity+") "+fromVal+"%,rgba("+rgbVal+","+toOpacity+") "+toVal+"%)", /* IE10+ */
+                    "background":"linear-gradient(to bottom, rgba("+rgbVal+","+fromOpacity+") "+fromVal+"%,rgba("+rgbVal+","+toOpacity+") "+toVal+"%)" /* W3C */
+                };
+            return {"background":"transparent"};
+        };
+    this.animationOff = {"-webkit-transition":"all 0 ease-in-out;",
+                        "-moz-transition":"all 0 ease-in-out;",
+                        "-o-transition":"all 0 ease-in-out;",
+                        "transition":"all 0 ease-in-out;"};
+    this.animationOn = {"-webkit-transition":"all "+this.slideShow.get("transitionTime")+"ms ease-in-out",
+                        "-moz-transition":"all "+this.slideShow.get("transitionTime")+"ms ease-in-out",
+                        "-o-transition":"all "+this.slideShow.get("transitionTime")+"ms ease-in-out",
+                        "transition":"all "+this.slideShow.get("transitionTime")+"ms ease-in-out"};
+
+
+    arSliderClasses = [
+        "mxs-show-title", "mxs-show-caption", "mxs-show-navigation", "mxs-show-arrows", "mxs-show-playBtn",
+        "titlePos-top", "titlePos-middle", "titlePos-bottom",
+        "captionPos-top", "captionPos-middle", "captionPos-bottom",
+        "images-contain", "images-cover", "images-contain-and-stretch", "images-cover-and-stretch",
+        "mxs-arrows-on-hover","mxs-arrowsPos-top","mxs-arrowsPos-bottom","mxs-arrowsPos-center","mxs-arrowsAlign-center","mxs-arrowsAlign-left","mxs-arrowsAlign-right"
+    ];
+
+    this.divSlider.removeClass(
+            arSliderClasses.join(" ")
+        ).addClass(
+            ((this.slideShow.get("showTitle")) ? "mxs-show-title titlePos-"+this.slideShow.get("letteringPositionTitle") : "")
+            +((this.slideShow.get("showCaption")) ? " mxs-show-caption captionPos-"+this.slideShow.get("letteringPositionCaption") : "")
+            +((this.slideShow.get("showNavigation")) ? " mxs-show-navigation" : "")
+            +((this.slideShow.get("showArrows")) ? " mxs-show-arrows" : "")
+            +((this.slideShow.get("showPlayButton")) ? " mxs-show-playBtn" : "")
+            +((this.slideShow.get("arrowsOnHover")) ? " mxs-arrows-on-hover" : "")
+            +((this.slideShow.get("arrowAlign")) ? " mxs-arrowsAlign-"+this.slideShow.get("arrowAlign") : "")
+            +((this.slideShow.get("arrowPosition")) ? " mxs-arrowsPos-"+this.slideShow.get("arrowPosition") : "")
+            +" images-"+this.slideShow.get("bgSize").toLowerCase()
+        );
+    this.divTexts.css({
+        "-webkit-transition":"opacity "+this.slideShow.get("transitionTime")+"ms ease-in-out",
+        "-moz-transition":"opacity "+this.slideShow.get("transitionTime")+"ms ease-in-out",
+        "-o-transition":"opacity "+this.slideShow.get("transitionTime")+"ms ease-in-out",
+        "transition":"opacity "+this.slideShow.get("transitionTime")+"ms ease-in-out"
+    });
+    this.divTitle.css({
+        "color":"rgb("+this.slideShow.get("colorTitle")+")",
+        "font-size":this.slideShow.get("letteringSizeTitle"),
+        "font-family":this.slideShow.get("letteringFontTitle"),
+        "font-weight":this.slideShow.get("letteringWeightTitle")
+        //"text-align":this.slideShow.get("letteringAlignTitle")
+    });
+    this.divCaption.css({
+        "color":"rgb("+this.slideShow.get("colorCaption")+")",
+        "font-size":this.slideShow.get("letteringSizeCaption"),
+        "font-family":this.slideShow.get("letteringFontCaption"),
+        "font-weight":this.slideShow.get("letteringWeightCaption")
+        //"text-align":this.slideShow.get("letteringAlignCaption")
+    });
+    this.divGradientTop.css(fnGradients(this.slideShow.get("colorGradients"),"0.8",0,"0",this.slideShow.get("gradientTop")));
+    this.divGradientBottom.css(fnGradients(this.slideShow.get("colorGradients"),"0",(100-this.slideShow.get("gradientBottom")),"0.8",100));
+
+    cssSlider["background-color"] = this.slideShow.get("colorBackground");//(this.slideShow.get("colorBackground").indexOf("#")>=0) ? "rgb("+this.slideShow.get("colorBackground")+")" : this.slideShow.get("colorBackground");
+    cssArrows = {
+        "border-color":"rgb("+this.slideShow.get("colorArrows")+")",
+        "color":"rgb("+this.slideShow.get("colorArrows")+")"
+    };
+    this.divPlay.css(cssArrows);
+    this.divPrev.css(cssArrows);
+    this.divNext.css(cssArrows);
+    this.divSlider.css(cssSlider);
+
+    this.tagStyles.append(
+        '#'+this.sliderID+'.mxs-slider .mxs-navigation-bullet{background: rgb('+this.slideShow.get("colorNavigation")+') !important; }' +
+        '#'+this.sliderID+'.mxs-slider .mxs-navigation-bullet::after{background: rgb('+this.slideShow.get("colorNavigation")+') !important; }' +
+        '#'+this.sliderID+'.mxs-slider .mxs-navigation-bullet.mxs-actBullet::after{background: rgb('+this.slideShow.get("colorNavigationActive")+') !important;}' +
+        '#'+this.sliderID+'.mxs-slider .mxs-navigation-bullet.mxs-actBullet{border-color: rgb('+this.slideShow.get("colorNavigationActive")+') !important;}'
+    );
+
+    this.calcSliderDimensions();
+};
+mxS.Slider.prototype.setTextpositions = function(){
+    //letteringPositionTitle/Caption => Top, Middle, Bottom
+    //letteringAlignTitle/Caption => left, Center, Right
+    var titleY      = this.slideShow.get("letteringPositionTitle"),
+        titleX      = this.slideShow.get("letteringAlignTitle"),
+        captionY    = this.slideShow.get("letteringPositionCaption"),
+        captionX    = this.slideShow.get("letteringAlignCaption");
+
+    this.divTexts.removeClass().addClass("mxs-texts");
+    this.divTitleWrapper.removeClass().addClass("mxs-titleWrapper mxs-textItem");
+    this.divCaptionWrapper.removeClass().addClass("mxs-captionWrapper mxs-textItem");
+
+    //Hack, falls ein Y middle ist un der andere nicht - hier hebel ich das Flex aus
+    if((titleY=="middle" && captionY!="middle") || (titleY!="middle" && captionY=="middle")){
+        this.divTitleWrapper.addClass("mxs-textFlexSpecial mxs-flex mxs-flexCol mxs-flexJC"+((titleY=="middle") ? "Center mxs-is-middle" : (titleY=="bottom") ? "End" : "Start"));
+        this.divCaptionWrapper.addClass("mxs-textFlexSpecial mxs-flex mxs-flexCol mxs-flexJC"+((captionY=="middle") ? "Center mxs-is-middle" : (captionY=="bottom") ? "End" : "Start"));
+    }else{
+        this.divTexts.addClass("mxs-flex");
+        if(titleY==captionY) this.divTexts.addClass("mxs-sameY");
+        if(titleY != captionY && (captionY=="top" || (captionY=="middle" && titleY=="bottom")))
+            this.divTexts.addClass("mxs-flexColReverse");
+        else if(titleY==captionY && titleX=="left" && captionX=="right"){
+            this.divTexts.addClass("mxs-flexRow");
+            this.divTitleWrapper.addClass("mxs-flex1");
+            this.divCaptionWrapper.addClass("mxs-flex1");
+        }else if(titleY==captionY && titleX=="right" && captionX=="left"){
+            this.divTexts.addClass("mxs-flexRowReverse");
+            this.divTitleWrapper.addClass("mxs-flex1");
+            this.divCaptionWrapper.addClass("mxs-flex1");
+        }else
+            this.divTexts.addClass("mxs-flexCol");
+        if((titleY=="top" && captionY=="bottom") || (captionY=="top" && titleY=="bottom")) this.divTexts.addClass("mxs-flexJCSpace");
+        else if((titleY=="top" && captionY=="middle") || (captionY=="top" && titleY=="middle") || (captionY=="top" && titleY=="top")) this.divTexts.addClass("mxs-flexJCStart");
+        else if((titleY=="bottom" && captionY=="middle") || (captionY=="bottom" && titleY=="middle") || (captionY=="bottom" && titleY=="bottom")) this.divTexts.addClass("mxs-flexJCEnd");
+        else if(titleY=="middle" && captionY=="middle") this.divTexts.addClass("mxs-flexJCCenter");
+
+        this.divTitleWrapper.addClass("mxs-flexSelf"+((titleY=="bottom") ? "End mxs-is-bottom" : ((titleY=="middle") ? "Center mxs-is-middle" : "Start mxs-is-top")));
+        this.divCaptionWrapper.addClass("mxs-flexSelf"+((captionY=="bottom") ? "End mxs-is-bottom" : ((captionY=="middle") ? "Center mxs-is-middle" : "Start mxs-is-top")));
+    }
+    this.divTitleWrapper.addClass("mxs-text"+((titleX=="right") ? "Right" : ((titleX=="center") ? "Center" : "Left")));
+    this.divCaptionWrapper.addClass("mxs-text"+((captionX=="right") ? "Right" : ((captionX=="center") ? "Center" : "Left")));
+};
+mxS.Slider.prototype.setArrowType = function(){
+    fnlogFunc("Slider:setArrowType");
+    var arClasses   = $.unique(this.divNext.attr("class").split(" ").concat(this.divPrev.attr("class").split(" ")));
+    var csslist     = "mxs-sBorder mxs-sThinBorder mxs-sShadow fa";
+    for(var i in arClasses){
+        if(arClasses[i].indexOf("fa-")==0)
+            csslist += " "+arClasses[i];
+    }
+
+    this.divNext.removeClass(csslist).html("");
+    this.divPrev.removeClass(csslist).html("");
+    switch(this.slideShow.get("arrowType")){
+        case "ANGLE-SINGLE-BORDER":
+            this.divNext.addClass("fa fa-lg fa-angle-right fa-mxs-angle-double-border mxs-sThinBorder mxs-sShadow");
+            this.divPrev.addClass("fa fa-lg fa-angle-left fa-mxs-angle-double-border mxs-sThinBorder mxs-sShadow");
+            break;
+        case "ANGLE-DOUBLE-BORDER":
+            this.divNext.addClass("fa fa-lg fa-angle-double-right fa-mxs-angle-double-border mxs-sThinBorder mxs-sShadow");
+            this.divPrev.addClass("fa fa-lg fa-angle-double-left fa-mxs-angle-double-border mxs-sThinBorder mxs-sShadow");
+            break;
+        case "ARROW-CIRCLE":
+            this.divNext.addClass("fa fa-lg fa-arrow-circle-right fa-mxs-arrow-circle mxs-sShadow");
+            this.divPrev.addClass("fa fa-lg fa-arrow-circle-left fa-mxs-arrow-circle mxs-sShadow");
+            break;
+        case "ARROW-CIRCLE-O":
+            this.divNext.addClass("fa fa-lg fa-arrow-circle-o-right fa-mxs-arrow-circle-o mxs-sShadow");
+            this.divPrev.addClass("fa fa-lg fa-arrow-circle-o-left fa-mxs-arrow-circle-o mxs-sShadow");
+            break;
+        case "FLIP-ARROW-CIRCLE":
+            this.divNext.addClass("fa-mxs-flip-arrow-circle")
+                .append($("<div></div>").addClass("fa fa-lg fa-angle-right mxs-sArrow"))
+                .append($("<div></div>").addClass("mxs-sMediumBorder mxs-sShadow"));
+            this.divPrev.addClass("fa-mxs-flip-arrow-circle")
+                .append($("<div></div>").addClass("fa fa-lg fa-angle-left mxs-sArrow"))
+                .append($("<div></div>").addClass("mxs-sMediumBorder mxs-sShadow"));
+            break;
+        case "CHEVRON-CIRCLE":
+            this.divNext.addClass("fa fa-lg fa-chevron-circle-right fa-mxs-arrow-chevron mxs-sShadow");
+            this.divPrev.addClass("fa fa-lg fa-chevron-circle-left fa-mxs-arrow-chevron mxs-sShadow");
+            break;
+        case "ANIMATED-ANGLE-CIRCLE":
+            this.divNext.addClass("mxs-sThinBorder").append($("<div></div>").addClass("fa fa-lg fa-angle-right fa-mxs-innerAngle-circle"));
+            this.divPrev.addClass("mxs-sThinBorder").append($("<div></div>").addClass("fa fa-lg fa-angle-left fa-mxs-innerAngle-circle"));
+            break;
+        case "ANIMATED-SCALE-ANGLE":
+            this.divNext.addClass("fa fa-lg fa-angle-right fa-mxs-scale-angle");
+            this.divPrev.addClass("fa fa-lg fa-angle-left fa-mxs-scale-angle");
+            break;
+        case "ANIMATED-OPACITY-CHEVRON":
+            this.divNext.addClass("fa fa-lg fa-chevron-right fa-mxs-opacity-chevron");
+            this.divPrev.addClass("fa fa-lg fa-chevron-left fa-mxs-opacity-chevron");
+            break;
+        case "ANIMATED-RUNNING-ANGLE":
+            this.divNext.addClass("fa fa-lg fa-angle-right fa-mxs-running-angle");
+            this.divPrev.addClass("fa fa-lg fa-angle-left fa-mxs-running-angle");
+            break;
+        case "ANIMATED-ROTATEZ-ARROW":
+            this.divNext.addClass("fa fa-lg fa-long-arrow-right fa-mxs-rotatez-arrow");
+            this.divPrev.addClass("fa fa-lg fa-long-arrow-left fa-mxs-rotatez-arrow");
+            break;
+        case "ANIMATED-DITHER-CARET":
+            this.divNext.addClass("fa fa-lg fa-mxs-dither-caret fa-mxs-dither-caret-right");
+            this.divPrev.addClass("fa fa-lg fa-mxs-dither-caret fa-mxs-dither-caret-left");
+            break;
+        default:
+            this.divNext.addClass("fa fa-lg fa-angle-double-right fa-mxs-default-arrow mxs-sThinBorder mxs-sShadow");
+            this.divPrev.addClass("fa fa-lg fa-angle-double-left fa-mxs-default-arrow mxs-sThinBorder mxs-sShadow");
+            break;
+    }
+};
+mxS.Slider.prototype.setNavigationColors = function(pos){
+    fnlogFunc("Slider:setNavigationColors");
+    if(this.slideShow.get("showNavigation")){
+        this.divNavigation.find(".mxs-navigation-bullet").removeClass("mxs-actBullet");
+        //this.divNavigation.find(".mxs-navigation-bullet::after").css({"background":"rgb("+this.slideShow.get("colorNavigation")+")"});
+        this.divNavigation.find(".mxs-navigation-bullet:nth-child("+(Number(pos)+Number(1))+")").addClass("mxs-actBullet");
+        //this.divNavigation.find(".mxs-navigation-bullet:nth-child("+(Number(pos)+Number(1))+")::after").css({"background":"rgb("+this.slideShow.get("colorNavigationActive")+")"});
+    }
+};
+mxS.Slider.prototype.setNavigationPosition = function(){
+    fnlogFunc("Slider:setNavigationPosition");
+    var arNavigationClasses = [
+        "mxs-navigation-top", "mxs-navigation-bottom", "mxs-navigation-middle",
+        "mxs-navigation-left", "mxs-navigation-right", "mxs-navigation-center",
+        "mxs-navigationType-bullets","mxs-navigationType-bullets-inset","mxs-navigationType-bullets-box",
+        "mxs-navigationType-border-bullets","mxs-navigationType-border-box","mxs-navigationType-single-line","mxs-navigationType-border-line"
+    ];
+    this.divSlider.removeClass(arNavigationClasses.join(" "));
+    if(this.slideShow.get("showNavigation")){
+        this.divSlider.addClass(
+            "mxs-navigation-"+this.slideShow.get("navigationPosition")
+            + " mxs-navigation-"+this.slideShow.get("navigationAlign")
+            + " mxs-navigationType-"+this.slideShow.get("navigationType").toLowerCase()
+        );
+        this.divSlider.addClass("mxs-navigationType-"+this.slideShow.get("navigationType").toLowerCase());
+    }
+};
+mxS.Slider.prototype.loadNavigation = function(){
+    fnlogFunc("Slider:loadNavigation");
+    this.setNavigationPosition();
+    this.divNavigation.html("");
+    if(this.slideShow.get("navigationType")!="NONE"){
+        var len = this.slideShow.getImages().length;
+        this.divNavigation.removeClass("mxs-hidden");
+        for(var i=0; i<len; i++){
+            this.divNavigation.append(
+                $("<div></div>").addClass("mxs-navigation-bullet mxs-flex mxs-flexJCCenter mxs-flexAlignItemsCenter").data({"nav":i})
+            );
+        }
+    }
+};
+mxS.Slider.prototype.reloadImages      = function(imageList,fnCallback){
+    var $this;
+    fnlogFunc("Slider:reloadImages");
+    $this = this;
+    this.slideShow.reloadImages(imageList,function(){
+        $this.preloadImages();
+        $this.loadNavigation();
+        $this.animate(-1,0,"NO-ANIMATION");
+        if(typeof(fnCallback)=="function")
+            fnCallback();
+    });
+};
+mxS.Slider.prototype.preloadImages      = function(){
+    fnlogFunc("Slider:preloadImages");
+    var numImages       = this.slideShow.getImages().length;
+    this.divImages.html("");
+    if (numImages === 0) {
+        return;
+    }
+    this.slideShow.randomizeImages();
+    for(var i=0; i<numImages; i++){
+        this.divImages.append(this.slideShow.getImage(i).divLayer.attr({"id":"mxs-image-"+i}));
+    }
+};
+mxS.Slider.prototype.loadImageProperties      = function(pos){
+    fnlogFunc("Slider:loadImageProperties");
+    if(pos>=0 && this.slideShow.getImages().length>pos){
+        var index = this.slideShow.getIndexToPos( pos );
+        this.divTitle.html(this.slideShow.getImage( index ).title);
+        this.divCaption.html(this.slideShow.getImage( index ).caption);
+        this.setNavigationColors(pos);
+    }
+};
+mxS.Slider.prototype.next           = function(){
+    fnlogFunc("Slider:next");
+    this.animate(this.curIndex,Number(this.curIndex)+Number(1),null);
+};
+mxS.Slider.prototype.prev           = function(){
+    fnlogFunc("Slider:prev");
+    this.animate(this.curIndex,this.curIndex-1,"PREV-REVERSE");
+};
+mxS.Slider.prototype.checkPos       = function(pos){
+    fnlogFunc("Slider:checkPos");
+    if(pos<0) return this.slideShow.getImages().length-1;
+    if(pos>=this.slideShow.getImages().length){
+        switch(this.slideShow.get("repeatType")){
+            case "STOP":
+                this.stop();
+                break;
+            default: // repeat
+//                this.recalcSlideshow("OPACITY");
+        }
+        return 0;
+    }
+    return pos;
+};
+mxS.Slider.prototype.setInTransition       = function(val){
+    this.isInTransition = val;
+};
+mxS.Slider.prototype.getInTransition       = function(){
+    return this.isInTransition;
+};
+mxS.Slider.prototype.animate        = function(fromPos,toPos,transitionType){
+    fnlogFunc("Slider:animate");
+    if (!this.slideShow.getImages().length) {
+        return;
+    }
+    var fromImg, toImg, toImgObj, $this = this;
+    fromPos = this.checkPos(fromPos);
+    toPos   = this.checkPos(toPos);
+    fromImg = $(this.divParent.find("#mxs-image-"+this.slideShow.getIndexToPos(fromPos))[0]);
+    toImg   = $(this.divParent.find("#mxs-image-"+this.slideShow.getIndexToPos(toPos))[0]);
+    toImgObj= this.slideShow.getImage(toPos);
+    if(["COVER","CONTAIN"].indexOf(this.slideShow.get("bgSize"))>=0 && toImgObj.getWidth() < this.sliderW && toImgObj.getHeight() < this.sliderH)
+        toImg.css({"background-size":"auto"});
+    else
+        toImg.css({"background-size":(this.slideShow.get("bgSize").indexOf("COVER")>=0) ? "cover" : "contain"});
+    this.showAnimatedText();
+    if(transitionType != "NO-ANIMATION" && transitionType != "OPACITY" && transitionType != "PREV-REVERSE" && (transitionType==null || this.slideShow.get("transitions")!="RANDOM")){
+        transitionType = this.slideShow.get("transitions");
+        if(transitionType=="RANDOM")
+            transitionType = this.slideShow.transitions[Math.floor((Math.random() * (this.slideShow.transitions.length-1)) + 1)];
+    }else if(transitionType == "PREV-REVERSE"){
+        var prevTransition = toImgObj.get("preTransition");
+        transitionType = (prevTransition===undefined || this.slideShow.reverseTransitions[prevTransition]!==undefined) ? this.slideShow.reverseTransitions[prevTransition] : "TURN-TO-RIGHT";
+    }
+    if(transitionType=="OPACITY" || transitionType=="NO-ANIMATION"){
+        toImg.css(this.animationOff);
+        toImg.removeClass("mxs-hidden").css({"top":0,"left":0,"opacity":0});
+        if(transitionType=="OPACITY") toImg.css(this.animationOn);
+        fromImg.css({"opacity":0});
+        toImg.css({"opacity":1});
+        if(transitionType=="NO-ANIMATION"){
+            transitionType = (this.slideShow.get("transitions")=="RANDOM") ? "OPACITY" : this.slideShow.get("transitions");
+            window.setTimeout(function(){toImg.css($this.animationOn);},this.slideShow.get("transitionTime"));
+        }
+    }else{
+        var fnResetImgCSS = function($this){
+                toImg.css($this.animationOff);
+                toImg.css({"top":0,"left":0,"bottom":"auto","right":"auto","width":"100%","height":"100%","opacity":0});
+            },
+            fnPositions = function($this,fromTop,fromLeft,fromOpacity){
+                toImg.css($this.animationOn);
+                fromImg.css({"top":fromTop+"px","left":fromLeft+"px","opacity":fromOpacity});
+                toImg.css({"top":0,"left":0,"opacity":1});
+            },
+            fnSlide = function($this,toTopBefore,toLeftBefore,fromTopAfter,fromLeftAfter){
+                fnResetImgCSS($this);
+                toImg.removeClass("mxs-hidden").css({"top":toTopBefore+"px","left":toLeftBefore+"px","opacity":1});
+                window.setTimeout(function(){fnPositions($this,fromTopAfter,fromLeftAfter,1);},5);
+            },
+            fnTurn = function($this,fromTopAfter,fromLeftAfter){
+                fnResetImgCSS($this);
+                toImg.removeClass("mxs-hidden");
+                window.setTimeout(function(){fnPositions($this,fromTopAfter,fromLeftAfter,0);},5);
+            },
+            fnShrink = function($this,fromTopAfter,fromBottomAfter,fromLeftAfter,fromRightAfter){
+                fnResetImgCSS($this);
+                toImg.removeClass("mxs-hidden");
+                window.setTimeout(function(){
+                    toImg.css($this.animationOn);
+                    fromImg.css($this.animationOn);
+                    toImg.css({"opacity":1});
+                    fromImg.css({"top":fromTopAfter,"bottom":fromBottomAfter,"left":fromLeftAfter,"right":fromRightAfter,"width":0,"height":0,"opacity":0});
+                },5);
+            },
+            fnGrow = function($this,toTopBefore,toBottomBefore,toLeftBefore,toRightBefore){
+                fnResetImgCSS($this);
+                toImg.removeClass("mxs-hidden").css({"top":toTopBefore.toString(),"bottom":toBottomBefore.toString(),"left":toLeftBefore.toString(),"right":toRightBefore.toString(),"width":"0","height":"0"});
+                window.setTimeout(function(){
+                    toImg.css($this.animationOn);
+                    fromImg.css($this.animationOn);
+                    toImg.css({"top":0,"left":0,"right":"auto","bottom":"auto","width":"100%","height":"100%","opacity":1});
+                    fromImg.css({"opacity":0});
+                },5);
+            };
+        switch(transitionType){
+            case "SHRINK-TO-TOP-LEFT":
+                fnShrink(this,0,"auto",0,"auto");
+                break;
+            case "SHRINK-TO-BOTTOM-RIGHT":
+                fnShrink(this,"auto",0,"auto",0);
+                break;
+            case "SHRINK-TO-CENTER":
+                fnShrink(this,Math.floor(this.sliderH/2)+"px","auto",Math.floor(this.sliderW/2)+"px","auto");
+                break;
+            case "GROW-FROM-TOP-LEFT":
+                fnGrow(this,0,"auto",0,"auto");
+                break;
+            case "GROW-FROM-BOTTOM-RIGHT":
+                fnGrow(this,"auto",0,"auto",0);
+                break;
+            case "GROW-FROM-CENTER":
+                fnGrow(this,Math.floor(this.sliderH/2)+"px","auto",Math.floor(this.sliderW/2)+"px","auto");
+                break;
+            case "SLIDE-TO-BOTTOM":
+                fnSlide(this,"-"+this.sliderH,0,this.sliderH,0);
+                break;
+            case "SLIDE-TO-TOP":
+                fnSlide(this,this.sliderH,0,"-"+this.sliderH,0);
+                break;
+            case "SLIDE-TO-RIGHT":
+                fnSlide(this,0,"-"+this.sliderW,0,this.sliderW);
+                break;
+            case "SLIDE-TO-LEFT":
+                fnSlide(this,0,this.sliderW,0,"-"+this.sliderW);
+                break;
+            case "TURN-TO-TOP":
+                fnTurn(this,"-"+this.sliderH,0);
+                break;
+            case "TURN-TO-BOTTOM":
+                fnTurn(this,this.sliderH,0);
+                break;
+            case "TURN-TO-LEFT":
+                fnTurn(this,0,"-"+this.sliderW);
+                break;
+            case "TURN-TO-RIGHT":
+            default:
+                transitionType = "TURN-TO-RIGHT";
+                fnTurn(this,0,this.sliderW);
+                break;
+
+        }
+    }
+    this.loadImageProperties(toPos);
+    this.curIndex = toPos;
+    if(toImgObj!==null) toImgObj.set("preTransition",transitionType); // for previous
+    this.animateText();
+    this.setInTransition(true);
+    window.setTimeout(function(){
+        $this.setInTransition(false);
+    },this.slideShow.get("transitionTime"));
+};
+mxS.Slider.prototype.animateText    = function(){
+    var $this = this;
+    window.setTimeout(function(){
+        if($this.isSliding)
+            $this.divTexts.addClass("mxs-animateInvisible");
+    },this.slideShow.get("delayTime"));
+};
+mxS.Slider.prototype.showAnimatedText    = function(){
+    this.divTexts.removeClass("mxs-animateInvisible");
+};
+mxS.Slider.prototype.slide          = function(){
+    fnlogFunc("Slider:slide");
+    var $this,timeInterval,fnInterval;
+    $this               = this;
+    timeInterval        = this.slideShow.get("timeInterval");
+    fnInterval          = function(){$this.next()};
+    this.stop();
+    this.divSlider.addClass("mxs-isSliding");
+    this.isSliding      = true;
+    mxS.timerIntervals[this.sliderID] = window.setInterval(fnInterval, timeInterval);
+    this.animateText();
+};
+mxS.Slider.prototype.stop           = function(){
+    fnlogFunc("Slider:stop");
+    this.divSlider.removeClass("mxs-isSliding");
+    this.showAnimatedText();
+    window.clearInterval(mxS.timerIntervals[this.sliderID]);
+    this.isSliding      = false;
+};
+
+
+
+
+
+
+
+/***************************************************************************************************************
+ * CLASS SLIDESHOW
+ * @constructor
+ */
+mxS.SlideShow = function(){};
+mxS.SlideShow.prototype.fnHexToRgb = function(hex){
+    if(hex!==undefined && typeof(hex)=="string" && hex.indexOf("#")==0){
+        var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? parseInt(result[1], 16)+","+parseInt(result[2], 16)+","+parseInt(result[3], 16) : null;
+    }
+    return hex;
+};
+mxS.SlideShow.prototype.reloadImages   = function(imageList,onreadyFirst){
+    fnlogFunc("SlideShow:reloadImages");
+    this.listImages = [];
+    if(imageList!==null){
+        if (imageList.length === 0) {
+            setTimeout(onreadyFirst, 10);
+            return;
+        }
+        for (var i in imageList){
+            var tmpImg = new mxS.Image();
+            tmpImg.init(imageList[i],(i==0) ? onreadyFirst : null);
+            this.listImages.push(tmpImg);
+        }
+    }
+};
+mxS.SlideShow.prototype.resetImagesDimensions   = function(){
+    for(var i in this.listImages)
+        this.listImages[i].reset();
+};
+mxS.SlideShow.prototype.setParams   = function(params,reloadImages){
+    fnlogFunc("SlideShow:setParams");
+    this.params         = {};
+    if(reloadImages)
+        this.reloadImages(null,null);
+
+    this.navigationTypes    = ["BULLETS","BULLETS-INSET","BULLETS-BOX","BORDER-BULLETS","BORDER-BOX","SINGLE-LINE","BORDER-LINE"];
+    this.arrowTypes         = ["DEFAULT","ARROW-CIRCLE","ARROW-CIRCLE-O",
+        "CHEVRON-CIRCLE","FLIP-ARROW-CIRCLE",
+        "ANIMATED-SCALE-ANGLE","ANIMATED-ANGLE-CIRCLE","ANIMATED-OPACITY-CHEVRON","ANIMATED-RUNNING-ANGLE",
+        "ANIMATED-ROTATEZ-ARROW","ANIMATED-DITHER-CARET",
+        "ANGLE-SINGLE-BORDER","ANGLE-DOUBLE-BORDER"];
+    this.transitions        = ["RANDOM","OPACITY",
+        "SHRINK-TO-CENTER","SHRINK-TO-TOP-LEFT","SHRINK-TO-BOTTOM-RIGHT",
+        "GROW-FROM-CENTER","GROW-FROM-TOP-LEFT","GROW-FROM-BOTTOM-RIGHT",
+        "SLIDE-TO-RIGHT","SLIDE-TO-LEFT","SLIDE-TO-BOTTOM","SLIDE-TO-TOP",
+        "TURN-TO-LEFT","TURN-TO-RIGHT","TURN-TO-TOP","TURN-TO-BOTTOM"];
+    this.reverseTransitions = {
+        "OPACITY":"OPACITY",
+        "SHRINK-TO-CENTER":"GROW-FROM-CENTER",
+        "SHRINK-TO-TOP-LEFT":"GROW-FROM-TOP-LEFT",
+        "SHRINK-TO-BOTTOM-RIGHT":"GROW-FROM-BOTTOM-RIGHT",
+        "GROW-FROM-CENTER":"SHRINK-TO-CENTER",
+        "GROW-FROM-TOP-LEFT":"SHRINK-TO-TOP-LEFT",
+        "GROW-FROM-BOTTOM-RIGHT":"SHRINK-TO-BOTTOM-RIGHT",
+        "SLIDE-TO-RIGHT":"SLIDE-TO-LEFT",
+        "SLIDE-TO-LEFT":"SLIDE-TO-RIGHT",
+        "SLIDE-TO-BOTTOM":"SLIDE-TO-TOP",
+        "SLIDE-TO-TOP":"SLIDE-TO-BOTTOM",
+        "TURN-TO-LEFT":"TURN-TO-RIGHT",
+        "TURN-TO-RIGHT":"TURN-TO-LEFT",
+        "TURN-TO-BOTTOM":"TURN-TO-TOP",
+        "TURN-TO-TOP":"TURN-TO-BOTTOM"};
+
+    //Generals
+    this.setParam("imagesRandom",params.imagesRandom,false,[true,false],null);
+
+    //Show/hide Elements
+    this.setParam("showTitle",params.showTitle,true,[true,false],null);
+    this.setParam("showCaption",params.showCaption,true,[true,false],null);
+    this.setParam("showNavigation",params.showNavigation,true,[true,false],null);
+    this.setParam("showArrows",params.showArrows,true,[true,false],null);
+    this.setParam("showPlayButton",params.showPlayButton,true,[true,false],null);
+
+    //Title / Caption Styles
+    this.setParam("letteringAlignTitle",((params.letteringAlignTitle!==undefined && typeof(params.letteringAlignTitle)=="string") ? params.letteringAlignTitle.toLowerCase():"right"),"right",["left","right","center"],null);
+    this.setParam("letteringPositionTitle",((params.letteringPositionTitle!==undefined && typeof(params.letteringPositionTitle)=="string") ? params.letteringPositionTitle.toLowerCase():"bottom"),"bottom",["top","middle","bottom"],null);
+    this.setParam("letteringSizeTitle",Number(params.letteringSizeTitle),24,null,64);
+    this.setParam("letteringWeightTitle",Number(params.letteringWeightTitle),600,[400,600,900],null);
+    this.setParam("letteringFontTitle",params.letteringFontTitle,"Arial, Sans-Serif",null,null);
+
+    this.setParam("letteringAlignCaption",((params.letteringAlignCaption!==undefined && typeof(params.letteringAlignCaption)=="string") ? params.letteringAlignCaption.toLowerCase():"right"),"right",["left","right","center"],null);
+    this.setParam("letteringPositionCaption",((params.letteringPositionCaption!==undefined && typeof(params.letteringPositionCaption)=="string") ? params.letteringPositionCaption.toLowerCase() : "bottom"),"bottom",["top","middle","bottom"],null);
+    this.setParam("letteringSizeCaption",Number(params.letteringSizeCaption),16,null,48);
+    this.setParam("letteringWeightCaption",Number(params.letteringWeightCaption),400,[400,600,900],null);
+    this.setParam("letteringFontCaption",params.letteringFontCaption,"Arial, Sans-Serif",null,null);
+
+    //Color / Arrow / Gradients
+    this.setParam("colorTitle",this.fnHexToRgb(params.colorTitle),"255,255,255",null,null);
+    this.setParam("colorCaption",this.fnHexToRgb(params.colorCaption),"255,255,255",null,null);
+    this.setParam("colorArrows",this.fnHexToRgb(params.colorArrows),"255,255,255",null,null);
+    this.setParam("colorNavigation",this.fnHexToRgb(params.colorNavigation),"255,255,255",null,null);
+    this.setParam("colorNavigationActive",this.fnHexToRgb(params.colorNavigationActive),"155,55,55",null,null);
+    this.setParam("colorGradients",this.fnHexToRgb(params.colorGradients),"0,0,0",null,null);
+    this.setParam("colorBackground",this.fnHexToRgb(params.colorBackground),"0,0,0",null,null);
+
+    this.setParam("arrowsOnHover",params.arrowsOnHover,false,[true,false],null);
+    this.setParam("arrowType",params.arrowType,"DEFAULT",this.arrowTypes,null);
+    this.setParam("arrowAlign",params.arrowAlign,"outward",["outward","left","right"],null);
+    this.setParam("arrowPosition",params.arrowPosition,"center",["center","top","bottom"],null);
+    this.setParam("gradientTop",Number(params.gradientTop),0,null,51);
+    this.setParam("gradientBottom",Number(params.gradientBottom),0,null,51);
+
+    //Transitions / Times / autoplay / random
+    this.setParam("transitions",((params.transitions!==undefined && typeof(params.transitions)=="string") ? params.transitions.toUpperCase() : "RANDOM"),"RANDOM",this.transitions,null);
+    this.setParam("transitionTime",Number(params.transitionTime),500,null,null);
+    this.setParam("delayTime",Number(params.delayTime),3000,null,null);
+    this.setParam("autoPlay",params.autoPlay,true,[true,false],null);
+    this.setParam("imageOrder",((params.imageOrder!==undefined && typeof(params.imageOrder)=="string") ? params.imageOrder.toUpperCase() : "ASC"),"ASC",["ASC","DESC","RAND"],null);
+
+    //bgSize / repeatType / navigation
+    this.setParam("bgSize",((params.bgSize!==undefined && typeof(params.bgSize)=="string") ? params.bgSize.toUpperCase() : "COVER"),"COVER",["COVER","CONTAIN","COVER-AND-STRETCH","CONTAIN-AND-STRETCH"],null);
+    this.setParam("repeatType",((params.repeatType!==undefined && typeof(params.repeatType)=="string") ? params.repeatType.toUpperCase() : "REPEAT"),"REPEAT",["REPEAT","STOP"/*,"BACKWARD"*/],null);
+    this.setParam("navigationType",((params.navigationType!==undefined && typeof(params.navigationType)=="string") ? params.navigationType.toUpperCase() : "BULLETS"),"BULLETS",this.navigationTypes,null);
+    this.setParam("navigationPosition",((params.navigationPosition!==undefined && typeof(params.navigationPosition)=="string") ? params.navigationPosition.toLowerCase() : "bottom"),"bottom",["top","bottom"],null);
+    this.setParam("navigationAlign",((params.navigationAlign!==undefined && typeof(params.navigationAlign)=="string") ? params.navigationAlign.toLowerCase() : "center"),"center",["left","center","right"],null);
+    this.set("timeInterval",Number(this.get("transitionTime"))+Number(this.get("delayTime")));
+};
+mxS.SlideShow.prototype.randomizeImages    = function(){
+    fnlogFunc("SlideShow:randomizeImages");
+    var numImages = this.listImages.length;
+    this.arImagesSort   = [];
+    for(var i=0; i<numImages; i++){
+        this.arImagesSort.push(i);
+    }
+    if(this.get("imagesRandom")){
+        var currentIndex = numImages, temporaryValue, randomIndex ;
+        while (0 !== currentIndex) {
+            randomIndex = Math.floor(Math.random() * currentIndex);
+            currentIndex -= 1;
+
+            temporaryValue                  = this.arImagesSort[currentIndex];
+            this.arImagesSort[currentIndex] = this.arImagesSort[randomIndex];
+            this.arImagesSort[randomIndex]  = temporaryValue;
+        }
+    }
+};
+mxS.SlideShow.prototype.setParam    = function(k,v,defaultVal,arVals,vMax){
+    if((v===undefined) || (typeof(v)=="number" && (isNaN(v) || v<=0 ||(vMax!==null && v>vMax))) || (arVals!=null && arVals.indexOf(v)<0))
+        this.set(k,defaultVal);
+    else
+        this.set(k,v);
+};
+mxS.SlideShow.prototype.getImages   = function(){
+    return this.listImages;
+};
+mxS.SlideShow.prototype.getIndexToPos    = function(pos){
+    return this.arImagesSort[pos];
+};
+mxS.SlideShow.prototype.getImage    = function(i){
+    return (this.listImages[this.arImagesSort[i]]!==undefined) ? this.listImages[this.arImagesSort[i]] : null;
+};
+mxS.SlideShow.prototype.set         = function(k,v){
+    this.params[k] = v;
+};
+mxS.SlideShow.prototype.get         = function(k){
+    return (this.params[k]!==undefined) ? this.params[k] : null;
+};
+
+
+
+
+
+
+
+
+/***************************************************************************************************************
+ * CLASS IMAGE
+ * @constructor
+ */
+mxS.Image = function(){};
+mxS.Image.prototype.init            = function(params,onready){
+    fnlogFunc("Image:init");
+    this.path       = (params.download_url!==undefined) ? params.download_url : "";
+    this.title      = (params.title!==undefined) ? params.title : "";
+    this.caption    = (params.caption!==undefined) ? params.caption : "";
+    this.divLayer   = $("<div></div>").addClass("mxs-image mxs-hidden").css({"background-image":"url('"+this.path+"?q=full')"});
+    this.preTransition = "OPACITY";
+    this.naturalW   = -1;
+    this.naturalH   = -1;
+    this.imgTag     = document.createElement("img");
+    this.imgTag.setAttribute('src',this.path + "?q=full");
+    if(typeof(onready) == "function"){
+        this.imgTag.addEventListener("load",function(){
+            onready();
+        });
+    }
+};
+mxS.Image.prototype.reset            = function(){
+    this.divLayer   = $("<div></div>").addClass("mxs-image mxs-hidden").css({"background-image":"url('"+this.path+"?q=full')"});
+    this.naturalW   = -1;
+    this.naturalH   = -1;
+};
+mxS.Image.prototype.set             = function(k,v){
+    this[k] = v;
+};
+mxS.Image.prototype.get             = function(k){
+    return (this[k]!==undefined) ? this[k] : null;
+};
+mxS.Image.prototype.getWidth             = function(){
+    if(this.naturalW == -1)
+        this.naturalW = this.imgTag.width;
+    return this.naturalW;
+};
+mxS.Image.prototype.getHeight             = function(){
+    if(this.naturalH == -1)
+        this.naturalH = this.imgTag.height;
+    return this.naturalH;
+};
